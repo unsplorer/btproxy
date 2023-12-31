@@ -1,0 +1,113 @@
+esphome:
+  name: btproxy
+  friendly_name: btproxy
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+
+ota:
+  password: "dae8a08ae0a05e820db46d3ddfa1efd2"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Btproxy Fallback Hotspot"
+    password: "UE8uUN9R4s1z"
+uart:
+  baud_rate: 115200
+  tx_pin: GPIO1
+  rx_pin: GPIO3
+
+captive_portal:
+
+ble_client:
+  - mac_address: "90:00:00:39:39:31"
+    id: my_ble_client
+
+light:
+  - platform: rgb
+    id: my_light
+    name: "testlight"
+    red: outputsplit
+    green: outputsplit
+    blue: outputsplit
+    on_turn_on:
+      - ble_client.ble_write:
+          id: my_ble_client
+          service_uuid: ff10
+          characteristic_uuid: ff12
+          value: [0xa0,0x11,0x04,0x01,0xb1,0x21]
+    on_turn_off:
+      - ble_client.ble_write:
+          id: my_ble_client
+          service_uuid: ff10
+          characteristic_uuid: ff12
+          value: [0xa0,0x11,0x04,0x00,0x70,0xe1]
+    on_state:
+      then:
+        # send the color thats selected in homeassistant
+        - ble_client.ble_write:
+            id: my_ble_client
+            service_uuid: ff10
+            characteristic_uuid: ff12
+            value: !lambda |-
+              uint8_t packet[9];
+              uint8_t red = (id(my_light).remote_values.get_red() * 255);
+              uint8_t green = (id(my_light).remote_values.get_green() * 255);
+              uint8_t blue = (id(my_light).remote_values.get_blue() * 255);
+              
+              // Construct the packet
+              packet[0] = 0xA0;         // Command type
+              packet[1] = 0x15;         // Specific command for color control
+              packet[2] = 0x07;         // Payload length
+              packet[3] = red;          // Red
+              packet[4] = green;        // Green
+              packet[5] = blue;         // Blue
+              packet[6] = 0xFF;         // Spacer
+              packet[7] = crc16(packet, 7) & 0xFF;        // CRC16 Low byte
+              packet[8] = (crc16(packet, 7) >> 8) & 0xFF; // CRC16 High byte
+               ESP_LOGD("Custom Component", "Color control packet: %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                 packet[0], packet[1], packet[2], packet[3], packet[4], packet[5], packet[6], packet[7], packet[8]);
+
+              // Convert the packet array to a std::vector<uint8_t>
+              return std::vector<uint8_t>(packet, packet + sizeof(packet) / sizeof(packet[0]));
+        # send the brightness thats in homeassitant
+        - ble_client.ble_write:
+            id: my_ble_client
+            service_uuid: ff10
+            characteristic_uuid: ff12
+            value: !lambda |-
+              uint8_t packet[6];
+              uint8_t brightness = (id(my_light).remote_values.get_brightness() * 100);
+              
+              // Construct the packet
+              packet[0] = 0xA0;         // Command type
+              packet[1] = 0x13;         // Specific command for color control
+              packet[2] = 0x04;         // Payload length
+              packet[3] = brightness;          // brightness
+              packet[4] = crc16(packet, 4) & 0xFF;        // CRC16 Low byte
+              packet[5] = (crc16(packet, 4) >> 8) & 0xFF; // CRC16 High byte
+                ESP_LOGD("Custom Component", "Color control packet: %02X %02X %02X %02X %02X %02X",
+                  packet[0], packet[1], packet[2], packet[3], packet[4], packet[5]);
+
+              // Convert the packet array to a std::vector<uint8_t>
+              return std::vector<uint8_t>(packet, packet + sizeof(packet) / sizeof(packet[0]));
+   
+output:
+  - platform: template
+    id: outputsplit
+    type: float
+    write_action:
+      - uart.write: [0xA0, 0x01, 0x01, 0xA2]
+
